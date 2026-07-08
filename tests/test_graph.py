@@ -1,4 +1,4 @@
-"""muster.graph — the generic scaffolding + patterns, tested standalone."""
+"""muster.graph: the generic scaffolding and patterns, tested standalone."""
 
 from __future__ import annotations
 

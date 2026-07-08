@@ -1,24 +1,24 @@
-"""Graph scaffolding — the generic phase-graph spine shared by every muster consumer.
+"""Graph scaffolding: the generic phase-graph spine shared by every muster consumer.
 
 muster does not own the graph *nodes* (pydantic-graph nodes are concrete-typed and
 edge-inferred from their return annotations, so they necessarily reference a
 consumer's own phases). What muster owns is the *mechanism* those nodes run on:
 
-- ``GraphState`` / ``GraphDeps`` — the small transient run context and the heavy-object
+- ``GraphState`` / ``GraphDeps``: the small transient run context and the heavy-object
   bag a consumer extends (both ``kw_only`` so a subclass can add required fields without
   the "non-default follows default" dataclass trap).
-- ``atomic_write`` — crash-safe file replace, for reports and run.json.
-- ``enter`` — phase-node entry: bump the iteration counter, record an ``enter`` event.
-- ``ask`` — the DURABLE-QUESTION pattern: a node that can't decide records a
-  content-addressed question and keeps going; the run finishes ``needs_input`` and an
-  orchestrator answers + resumes. Never a blocking wait.
-- ``WorkDispatcher`` — the work-queue drain mechanism: an ``operation -> handler``
-  registry plus the lease/dispatch step. A consumer's ``ProcessWorkQueue`` node self-loops
+- ``atomic_write``: crash-safe file replace, for reports and run.json.
+- ``enter``: phase-node entry that bumps the iteration counter and records an ``enter``
+  event.
+- ``ask``: the durable-question pattern. A node that can't decide records a
+  content-addressed question and keeps going; the run finishes ``needs_input`` and
+  whoever is driving it answers and resumes. Never a blocking wait.
+- ``WorkDispatcher``: the work-queue drain mechanism, an ``operation -> handler``
+  registry plus the lease/dispatch step. A consumer's queue-drain node self-loops
   calling it; new operations plug in as handlers without touching the graph.
 
 All the helpers are duck-typed on a pydantic-graph ``GraphRunContext`` whose ``state``
-subclasses ``GraphState`` and ``deps`` subclasses ``GraphDeps``. See
-docs/investigation-engine-seam.md.
+subclasses ``GraphState`` and ``deps`` subclasses ``GraphDeps``.
 """
 
 from __future__ import annotations
@@ -73,11 +73,11 @@ def enter(ctx, name: str) -> None:
 
 
 def ask(ctx, *, node: str, kind: str, prompt: str, options=None) -> str | None:
-    """Ask a DURABLE question — never a blocking wait. Returns the answer if one was
+    """Ask a durable question. Never a blocking wait. Returns the answer if one was
     injected (a prior resume), else records the question as pending and returns None; the
     caller handles None by deferring that path. The run finishes ``needs_input`` while any
-    question is unanswered, and an orchestrator answers + resumes. Idempotent: the id is
-    content-addressed, so the same question maps to the same answer across re-drives."""
+    question is unanswered, and whoever is driving it answers and resumes. Idempotent: the
+    id is content-addressed, so the same question maps to the same answer across re-drives."""
     qid = stable_key(prompt, kind, node)
     answer = ctx.deps.ledger.get_answer(ctx.state.run_id, qid)
     if answer is not None:
@@ -91,13 +91,13 @@ WorkHandler = Callable[[Any, dict], None]
 
 
 class WorkDispatcher:
-    """The generic work-queue drain mechanism — a registry of ``operation -> handler``
-    plus the lease/dispatch step. A consumer's ``ProcessWorkQueue`` node self-loops
-    calling ``run_one`` (or leases itself and calls ``dispatch``); each handler drives its
-    leased item to a terminal status and may enqueue follow-ups. An unknown operation is
-    deferred with a note (never left leased — that would stall the loop), and a handler
-    that raises fails its item rather than the run. New operations plug in as handlers
-    without touching the graph."""
+    """The generic work-queue drain mechanism: a registry of ``operation -> handler``
+    plus the lease/dispatch step. A consumer's queue-drain node self-loops calling
+    ``run_one`` (or leases itself and calls ``dispatch``); each handler drives its leased
+    item to a terminal status and may enqueue follow-ups. An unknown operation is deferred
+    with a note (never left leased, which would stall the loop), and a handler that raises
+    fails its item rather than the run. New operations plug in as handlers without touching
+    the graph."""
 
     def __init__(self, handlers: dict[str, WorkHandler] | None = None, *,
                  node_label: str = "WorkDispatcher"):

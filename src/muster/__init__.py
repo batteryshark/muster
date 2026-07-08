@@ -1,14 +1,10 @@
-"""muster — a ledgered investigation runtime.
+"""muster: a ledgered investigation runtime.
 
 A durable, coverage-gated, resumable work-graph runtime with bounded adaptive model
-steps. muster owns the SPINE (run identity + on-disk layout, the SQLite ledger, the
-graph runner with the work-queue drain, resume, and the lead / adversarial-verify /
-durable-question patterns). A consumer registers its DOMAIN — its tables, nodes, work
-handlers, and coverage predicate — via composition, never by muster knowing about the
-domain (see docs/investigation-engine-seam.md).
-
-Extraction in progress: slices 1 (run identity + paths) and 2 (the ledger core) are
-here; the graph scaffolding follows.
+steps. muster owns the spine: run identity and on-disk layout, the SQLite ledger, the
+graph scaffolding with its work-queue drain, resume, and the durable-question channel.
+An application registers its own domain (its tables, work handlers, and coverage
+predicate) by composition, so muster never needs to know anything about that domain.
 """
 
 from __future__ import annotations

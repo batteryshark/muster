@@ -1,4 +1,4 @@
-"""muster.paths — run/project identity + on-disk layout, tested standalone."""
+"""muster.paths: run/project identity and on-disk layout, tested standalone."""
 
 from __future__ import annotations
 

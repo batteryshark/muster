@@ -2,31 +2,75 @@
 
 *A ledgered investigation runtime.*
 
-A durable, coverage-gated, resumable work-graph runtime with bounded adaptive model
-steps — the provable-workload core extracted from **unmask** (malicious-code detection)
-and intended to be shared by **lucent** (code understanding) and **rekit-factory** (RE /
-debugger / compat-patching).
+muster runs investigations that are durable, coverage-gated, and resumable. You describe a
+body of work as a graph of phases; muster drains that work off a SQLite ledger one item at
+a time, records every step, and picks up exactly where it left off after a crash. Bounded,
+adaptive model steps are supported, but they never decide when the work is done. The ledger
+does.
 
-muster owns the **spine**:
+## What it gives you
 
-- **run identity + on-disk layout** — content-addressed project/run ids, one SQLite
-  ledger per run (`muster.paths`)
-- **the ledger** — coverage-gated work queue, exactly-once durability, audit, resume
-  (`muster.Ledger`; a consumer layers its domain tables via `extra_schema`/`reset_tables`)
-- **the graph scaffolding** — base `GraphState`/`GraphDeps`, `atomic_write`, phase-entry
-  `enter`, and the `WorkDispatcher` (work-queue drain: an `operation → handler` registry +
-  lease/dispatch), in `muster.graph`
-- **the patterns** — durable questions (`ask` → `needs_input`); model-proposed leads,
-  adversarial verification, and per-role model routing (still consumer-side, generalising
-  next)
+- **Run identity and layout.** Content-addressed project and run ids, one SQLite ledger per
+  run, and a predictable on-disk directory (`muster.paths`).
+- **The ledger.** A coverage-gated work queue with exactly-once durability, an audit trail,
+  and resume (`muster.Ledger`).
+- **Graph scaffolding.** Base `GraphState` and `GraphDeps`, a crash-safe `atomic_write`, a
+  phase-entry helper, a durable-question channel, and a `WorkDispatcher` that maps work
+  operations to handlers and drains the queue (`muster.graph`).
 
-A consumer registers its **domain** — its tables, nodes, work handlers, and coverage
-predicate — by composition; muster never knows about the domain. muster owns the
-*mechanism* the nodes run on, not the pydantic-graph nodes themselves (those are
-concrete-typed and edge-inferred, so they stay with the consumer). See the extraction
-seam in `docs/investigation-engine-seam.md` (in the unmask repo during extraction).
+## How you use it
 
-> Extraction in progress. Landed: slice 1 (run identity + paths), slice 2 (the ledger
-> core / spine vs domain), slice 3 (graph scaffolding + durable questions + the work
-> dispatcher). Next: generalise the lead / adversarial-verify / model-routing patterns,
-> then validate against a second consumer.
+muster owns the machinery. You bring the domain: your own tables, your work handlers, and
+what "covered" means for your problem. You register all of it by composition, so muster
+never needs to know anything about your domain.
+
+Subclass the ledger to add your tables:
+
+```python
+from muster import Ledger
+
+class MyLedger(Ledger):
+    def __init__(self, db_path):
+        super().__init__(db_path,
+                         extra_schema=MY_SCHEMA_SQL,
+                         reset_tables=("facts", "findings"))
+    # add your own record and count methods here
+```
+
+Register work operations as handlers and let the dispatcher drain them:
+
+```python
+from muster import WorkDispatcher
+
+dispatcher = WorkDispatcher({"scan": handle_scan}, node_label="ProcessQueue")
+```
+
+The phase nodes stay in your own graph, since they are concrete-typed and reference your
+own phases. muster provides the mechanism they run on.
+
+## Durable questions
+
+A phase that cannot decide something on its own records a question and keeps going, rather
+than blocking. The run finishes in a `needs_input` state with the question pending; whoever
+is driving it supplies an answer and resumes, and the answer survives the reset so the
+re-run reads it and continues. Human-in-the-loop without giving up durability.
+
+## Install
+
+muster is consumed as a dependency. From another project:
+
+```toml
+# pyproject.toml
+[project]
+dependencies = ["muster"]
+
+[tool.uv.sources]
+muster = { git = "https://github.com/batteryshark/muster.git" }
+```
+
+The core depends only on `pydantic-graph`. An optional `model` extra adds `pydantic-ai`
+for applications that build bounded model steps on top.
+
+## Requirements
+
+Python 3.11+.

@@ -1,10 +1,10 @@
--- muster core ledger (per-run SQLite database) — the SPINE tables.
+-- muster core ledger (per-run SQLite database): the spine tables.
 --
 -- This is the durable source of truth for coverage and resumability. The phase
 -- graph reads ledger state to decide what runs next and when a run may finish;
--- the model never decides completion. A consumer registers its own DOMAIN tables
--- (whatever a "fact" or "finding" is for that domain) via Ledger(extra_schema=...);
--- muster never knows about them. See docs/investigation-engine-seam.md.
+-- the model never decides completion. An application registers its own domain
+-- tables (whatever a "fact" or "finding" is for it) via Ledger(extra_schema=...);
+-- muster never knows about them.
 
 pragma journal_mode = wal;
 pragma synchronous = normal;
@@ -92,7 +92,7 @@ create table if not exists reports (
 );
 
 -- Durable questions a node could not answer itself. The run finishes `needs_input`
--- with these pending; the orchestrator answers and resumes. Regenerated per drive
+-- with these pending; whoever is driving the run answers and resumes. Regenerated per drive
 -- (re-asked when the graph re-runs), so it IS reset on resume.
 create table if not exists questions (
     id           text primary key,               -- content-addressed (prompt+kind+node)

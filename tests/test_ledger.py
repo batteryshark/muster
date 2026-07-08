@@ -1,4 +1,4 @@
-"""muster.Ledger — the generic spine, tested standalone (no consumer domain)."""
+"""muster.Ledger: the generic spine, tested standalone with no domain layered on."""
 
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ def test_count_work_items_filters_by_operation_and_status(ledger):
     f = ledger.enqueue(run_id="r1", key=stable_key("fetch"), target="u",
                        operation="fetch", category="c", title="t")
     ledger.set_work_status(f, "blocked")
-    # both 'blocked' but different operations — the filter separates a binary blind spot
+    # both 'blocked' but different operations, so the filter separates a binary blind spot
     # from a network-blocked fetch (the bug the filtered count was added to fix).
     assert ledger.count_work_items("r1", operation="scan-binary", status="blocked") == 1
     assert ledger.count_work_items("r1", operation="fetch", status="blocked") == 1
@@ -123,8 +123,8 @@ def test_reset_run_derived_keeps_run_and_answers(ledger):
 
 
 def test_extra_schema_and_reset_tables_registration(tmp_path):
-    """A consumer registers a domain table + its resume-reset via the constructor —
-    the option-B composition seam that keeps muster ignorant of the domain."""
+    """An application registers a domain table and its resume-reset through the
+    constructor: the composition seam that keeps muster ignorant of the domain."""
     class DomainLedger(Ledger):
         def __init__(self, db_path):
             super().__init__(

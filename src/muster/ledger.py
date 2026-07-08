@@ -1,21 +1,20 @@
-"""Ledger: the per-run SQLite spine — muster's durable coverage/resume oracle.
+"""Ledger: the per-run SQLite spine, muster's durable coverage and resume oracle.
 
-Every graph node reads ledger state on entry and records events/rows on exit;
+Every graph node reads ledger state on entry and records events and rows on exit;
 completion is gated on ledger coverage, not on model output. This class owns the
-GENERIC spine (runs, artifacts, the work queue, graph events, reports, and the
-durable question/answer channel). A consumer registers its DOMAIN tables and the
+generic spine (runs, artifacts, the work queue, graph events, reports, and the
+durable question/answer channel). An application registers its own tables and the
 tables to wipe on resume through the constructor:
 
     class MyStore(Ledger):
         def __init__(self, db_path):
             super().__init__(db_path,
-                             extra_schema=MY_DOMAIN_SCHEMA_SQL,
-                             reset_tables=("observations", "findings"))
-            ...  # add domain record/count methods
+                             extra_schema=MY_SCHEMA_SQL,
+                             reset_tables=("facts", "findings"))
+            ...  # add record and count methods for those tables
 
-muster never imports the consumer; the consumer subclasses (registration by
-composition) so existing call sites keep using one store object. See
-docs/investigation-engine-seam.md.
+muster never imports the application; the application subclasses it, so all of its
+code works through one ledger object.
 """
 
 from __future__ import annotations
@@ -41,9 +40,9 @@ _CORE_RESET_TABLES = ("artifacts", "work_items", "graph_events", "reports", "que
 
 
 def utcnow() -> str:
-    """UTC timestamp in ISO-8601 — the ledger's created_at/updated_at format. Public so a
-    consumer's LedgerStore subclass can timestamp its domain rows consistently with the
-    spine (part of the subclassing contract, not a private reach-in)."""
+    """UTC timestamp in ISO-8601, the ledger's created_at/updated_at format. Public so a
+    Ledger subclass can timestamp its own rows consistently with the spine (part of the
+    subclassing contract, not a private reach-in)."""
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -204,8 +203,8 @@ class Ledger:
 
     def lease_next_actionable(self, run_id: str):
         """Claim the highest-priority queued work item (mark it `leased`) and return its
-        row, or None if the queue is drained. The ProcessWorkQueue loop's lease step —
-        a handler must then drive it to a terminal status."""
+        row, or None if the queue is drained. This is the drain loop's lease step; a
+        handler must then drive the item to a terminal status."""
         row = self.conn.execute(
             "select * from work_items where run_id=? and status='queued' "
             "order by priority desc, created_at asc limit 1", (run_id,)).fetchone()
@@ -216,7 +215,7 @@ class Ledger:
                           (ts, row["id"]))
         self.conn.commit()
         # Return the post-lease view (status='leased') so the caller sees the state it just
-        # claimed — built in memory from the row already fetched, no second query. Nothing
+        # claimed, built in memory from the row already fetched (no second query). Nothing
         # reads the pre-lease snapshot; the sole caller re-wraps this in a dict.
         leased = dict(row)
         leased["status"] = "leased"
@@ -263,7 +262,7 @@ class Ledger:
         return row["answer"] if row else None
 
     def pending_questions(self, run_id: str) -> list[dict]:
-        """Questions asked this run that have no answer yet — what the orchestrator must
+        """Questions asked this run that have no answer yet: what the caller must
         resolve before the run can complete."""
         rows = self.conn.execute(
             "select q.id, q.node, q.kind, q.prompt, q.options_json from questions q "
