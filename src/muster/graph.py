@@ -120,7 +120,7 @@ class WorkDispatcher:
                 handler(ctx, item)
             else:
                 ctx.deps.ledger.set_work_status(item["id"], "deferred",
-                    result={"note": f"No queue handler for operation {op!r}."})
+                    error=f"No queue handler for operation {op!r}.")
         except Exception as exc:  # a handler bug must not stall the loop
             ctx.deps.ledger.set_work_status(item["id"], "failed", error=f"{type(exc).__name__}: {exc}")
             ctx.deps.ledger.event(ctx.state.run_id, self._node_label, "error",

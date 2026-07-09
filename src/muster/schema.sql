@@ -28,6 +28,14 @@ create table if not exists runs (
     updated_at             text not null,
     completed_at           text,
     config_json            text not null,
+    -- Termination-oracle state (see Ledger.assess). The loop-pass counter, its safety
+    -- ceiling, and the idle-detection snapshot. Persistent, and preserved across resume,
+    -- so a re-driven run keeps counting toward its ceiling instead of starting over.
+    iteration              integer not null default 0,
+    max_iterations         integer not null default 50,
+    idle_rounds            integer not null default 0,
+    items_at_last_check    integer not null default 0,
+    terminal_at_last_check integer not null default 0,
     coverage_json          text,
     summary_json           text,
     error                  text
@@ -58,19 +66,36 @@ create table if not exists work_items (
     operation      text not null,                 -- consumer-defined unit of work (e.g. inventory|render-report|...)
     category       text not null,
     title          text not null,
-    status         text not null,                 -- queued|leased|done|failed|needs_review|needs_evidence|deferred|blocked
+    -- Loop-driver state machine. Terminal: done|failed|needs_review|deferred|blocked.
+    -- Leasable (the drain loop may claim it, dependencies permitting): queued|needs_evidence.
+    -- needs_evidence is a non-terminal "come back with more" state, so it re-leases.
+    status         text not null,
+    state_label    text,                           -- domain state, orthogonal to status; the drain loop ignores it (e.g. evaluating|reviewed|triaged|confirmed)
     priority       integer not null default 100,
-    depends_on_json text not null default '[]',
+    depends_on_json text not null default '[]',    -- ids that must be terminal before this item is actionable (the work DAG)
     payload_json   text not null default '{}',
-    attempts       integer not null default 0,
+    attempts       integer not null default 0,     -- bumped on every lease; a growing count on a still-pending item flags thrash
     created_at     text not null,
     updated_at     text not null,
     terminal_at    text,
     result_json    text,
-    error          text,
+    evidence       text,                           -- first-class proof/support for a resolution, distinct from the result blob
+    error          text,                           -- why it did not resolve: the required reason for deferred/blocked, or the failure for failed
     unique(run_id, stable_key)
 );
 create index if not exists idx_work_run_status on work_items(run_id, status);
+
+-- Append-only, per-item audit notes. A work item can accrue observations across passes
+-- without mutating its result; parallel to graph_events but attributable to one item.
+create table if not exists work_notes (
+    id            text primary key,
+    run_id        text not null,
+    work_item_id  text not null,
+    iteration     integer not null default 0,
+    text          text not null,
+    created_at    text not null
+);
+create index if not exists idx_work_notes_item on work_notes(work_item_id);
 
 create table if not exists graph_events (
     id           text primary key,

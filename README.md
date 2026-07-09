@@ -1,6 +1,10 @@
-# muster
+<p align="center">
+  <img src="muster-logo.png" alt="muster logo" width="220">
+</p>
 
-*A ledgered investigation runtime.*
+<h1 align="center">muster</h1>
+
+<p align="center"><em>A ledgered investigation runtime.</em></p>
 
 muster runs investigations that are durable, coverage-gated, and resumable. You describe a
 body of work as a graph of phases; muster drains that work off a SQLite ledger one item at
