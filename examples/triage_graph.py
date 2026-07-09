@@ -25,17 +25,17 @@ Run it with no API key — the ``__main__`` block injects a deterministic ``Func
 To point it at a real model instead, build the agent with a model string and drop the
 override, e.g. ``Agent("anthropic:claude-sonnet-4-5", output_type=Triage, ...)``.
 
-Note on threading: the model call runs via ``asyncio.to_thread`` because ``run_sync``
-cannot execute on the graph's own event loop, and because the ledger's SQLite connection
-is thread-bound, every ledger write stays on this (the main) thread. This is the same
-split unmask uses for its agentic phases. muster's ``WorkDispatcher`` is the tool for a
-registry of purely *synchronous* handlers; here one operation is agentic, so the drain
-node dispatches by operation inline.
+Note on async: the agent step uses the async API (``await agent.run(...)``), so it runs on
+the graph's own event loop without a thread and without blocking it; the ledger writes stay
+on that same single thread, which is what muster's thread-bound SQLite connection wants.
+(``agent.run_sync`` is only for synchronous callers — using it here would fail on the running
+loop, and offloading it to a thread would then bar that thread from touching the ledger.)
+muster's ``WorkDispatcher`` is the tool for a registry of *synchronous* handlers; here one
+operation is agentic and needs ``await``, so the drain node dispatches by operation inline.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import tempfile
 from dataclasses import dataclass
@@ -157,8 +157,10 @@ async def _triage_item(ctx, item: dict) -> None:
     prompt = f"Alert: {alert}"
     if enriched:
         prompt += "\n[enriched] decoded/expanded context has been attached; decide now."
-    # Model call OFF the graph's event loop; every ledger write stays on this thread.
-    out: Triage = await asyncio.to_thread(lambda: d.agent.run_sync(prompt).output)
+    # The async agent API runs on the graph's own event loop — no thread, no blocking — and
+    # the ledger writes below stay on this same (single) thread, which is what muster's
+    # thread-bound SQLite connection wants. (Use agent.run_sync only from synchronous code.)
+    out: Triage = (await d.agent.run(prompt)).output
 
     if out.verdict == "needs_more" and not enriched:
         # send it back to be re-leased with more evidence (non-terminal; attempts will climb)

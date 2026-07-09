@@ -46,11 +46,14 @@ override — e.g. `build_agent("anthropic:claude-sonnet-4-5")`.
 
 ### Notes
 
-- The model call runs via `asyncio.to_thread` because `Agent.run_sync` cannot execute on
-  the graph's own event loop, and because the ledger's SQLite connection is thread-bound,
-  every ledger write stays on the main thread. This is the same split real consumers use
-  for agentic phases.
-- muster's `WorkDispatcher` is the tool for a registry of purely *synchronous* handlers;
-  here one operation is agentic (async), so the drain node dispatches by operation inline.
+- The agent step uses the async API (`await agent.run(...)`), so it runs on the graph's own
+  event loop with no thread and no blocking, and the ledger writes stay on that same single
+  thread — which is what muster's thread-bound SQLite connection wants. (`agent.run_sync` is
+  for synchronous callers only; it would fail on the running loop.) muster's connection is
+  thread-bound by design, which only matters if you offload ledger-touching work to a worker
+  thread or want to process items *concurrently* — then use a per-thread connection over the
+  (already-enabled) WAL, not a shared one.
+- muster's `WorkDispatcher` is the tool for a registry of *synchronous* handlers; here one
+  operation is agentic and needs `await`, so the drain node dispatches by operation inline.
 - Real applications subclass `Ledger` to register their own domain tables (see the top-level
   README); this example uses the bare spine to stay focused on the wiring.
