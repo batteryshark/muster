@@ -3,20 +3,22 @@
 This wires the whole spine together on a toy domain — triaging a batch of security
 alerts — so you can see how the pieces fit:
 
-    Seed ──▶ Triage (self-loops, draining the queue) ──▶ Summarize ──▶ End
+    Seed ──▶ Drain (AsyncWorkDispatcher, concurrent) ──▶ Summarize ──▶ End
 
 - **The ledger is the source of truth.** `Seed` enqueues one work item per alert plus a
   `correlate` item that ``depends_on`` all of them. The dependency DAG means `correlate`
   is not actionable until every alert is terminal — muster enforces that at lease time.
-- **The oracle decides completion, not the model.** Each `Triage` pass calls
-  ``ledger.assess()``; it returns CONTINUE while actionable work remains and COMPLETE when
-  the queue is drained (or DEADLOCKED / MAX_ITERATIONS otherwise). The graph never guesses.
+- **Agentic handlers are first-class + concurrent.** `Drain` hands the queue to an
+  ``AsyncWorkDispatcher`` that keeps several handlers in flight; the ``triage`` handler
+  ``await``s the model, so alerts triage in parallel. One ``drain()`` call clears the run —
+  re-leasing as slots free — then ``ledger.assess()`` confirms completion (the oracle, not
+  the model: COMPLETE when nothing is pending, else DEADLOCKED / MAX_ITERATIONS).
 - **The agent is a bounded, typed step.** One alert in, one validated ``Triage`` verdict
   out. Its verdict maps onto ledger states, and its domain reading is stamped as a
   ``state_label`` — orthogonal to the loop-driver ``status``.
 - **needs_evidence is a real retry.** When the agent wants more, the item goes back to
-  ``needs_evidence`` (non-terminal, re-leasable); ``attempts`` climbs, and on the second
-  pass the handler enriches the prompt and the agent decides.
+  ``needs_evidence`` (non-terminal, re-leasable); it bounces back in the same ``drain()``
+  call, ``attempts`` climbs, and the handler enriches the prompt so the agent can decide.
 
 Run it with no API key — the ``__main__`` block injects a deterministic ``FunctionModel``:
 
@@ -29,9 +31,8 @@ Note on async: the agent step uses the async API (``await agent.run(...)``), so 
 the graph's own event loop without a thread and without blocking it; the ledger writes stay
 on that same single thread, which is what muster's thread-bound SQLite connection wants.
 (``agent.run_sync`` is only for synchronous callers — using it here would fail on the running
-loop, and offloading it to a thread would then bar that thread from touching the ledger.)
-muster's ``WorkDispatcher`` is the tool for a registry of *synchronous* handlers; here one
-operation is agentic and needs ``await``, so the drain node dispatches by operation inline.
+loop.) ``AsyncWorkDispatcher`` runs these async handlers with bounded concurrency on that one
+event-loop thread; its synchronous sibling ``WorkDispatcher`` is for non-async handlers.
 """
 
 from __future__ import annotations
@@ -45,7 +46,9 @@ from typing import Literal
 from pydantic import BaseModel
 from pydantic_graph import BaseNode, End, GraphBuilder
 
-from muster import CONTINUE, GraphDeps, GraphState, Ledger, RunPaths, enter, stable_key
+from muster import (
+    AsyncWorkDispatcher, GraphDeps, GraphState, Ledger, RunPaths, enter, stable_key,
+)
 
 # ── The bounded model step: one alert in, one typed verdict out ──────────────────
 
@@ -112,25 +115,19 @@ class Seed(BaseNode[TriageState, TriageDeps, dict]):
 
 @dataclass
 class Drain(BaseNode[TriageState, TriageDeps, dict]):
-    """Drain the queue one actionable item per pass, gated by the ledger's oracle. Agentic
-    items call the model off the event loop; the sync `correlate` item is pure ledger work."""
+    """Work the queue with the AsyncWorkDispatcher — up to `concurrency` handlers in flight,
+    re-leasing as slots free. One drain() call clears the whole run: alerts triage in
+    parallel, needs_evidence items bounce back for a retry, and the dependency-blocked
+    `correlate` step runs once the alerts are all terminal. assess() then confirms it."""
 
-    async def run(self, ctx) -> "Drain | Summarize":
+    async def run(self, ctx) -> "Summarize":
         d, s = ctx.deps, ctx.state
         enter(ctx, "Drain")
-        verdict = d.ledger.assess(s.run_id)  # the oracle — not the model — decides to stop
-        if verdict.verdict != CONTINUE:
-            d.ledger.event(s.run_id, "Drain", "note",
-                           {"stop": verdict.verdict, "message": verdict.message})
-            return Summarize()
-        item = d.ledger.lease_next_actionable(s.run_id)  # respects the dependency DAG
-        if item is None:
-            return Summarize()
-        if item["operation"] == "triage":
-            await _triage_item(ctx, item)
-        else:
-            _correlate_item(ctx, item)
-        return Drain()
+        processed = await _DISPATCHER.drain(ctx, concurrency=4)
+        verdict = d.ledger.assess(s.run_id)  # the oracle — not the model — decides completion
+        d.ledger.event(s.run_id, "Drain", "note", {"processed": processed,
+                       "verdict": verdict.verdict, "message": verdict.message})
+        return Summarize()
 
 
 @dataclass
@@ -175,12 +172,19 @@ async def _triage_item(ctx, item: dict) -> None:
                        state_label="inconclusive")
 
 
-def _correlate_item(ctx, item: dict) -> None:
-    """Pure ledger work — only reachable once every triage item is terminal (the DAG)."""
+async def _correlate_item(ctx, item: dict) -> None:
+    """Pure ledger work (no model call) — only reachable once every triage item is terminal
+    (the DAG). Async so it plugs into the same dispatcher as the agentic handler."""
     d, s = ctx.deps, ctx.state
     d.ledger.resolve(item["id"],
                      result={"labelBreakdown": d.ledger.work_label_counts(s.run_id)},
                      state_label="reported")
+
+
+# The work-queue registry: one operation → one async handler. Agentic and synchronous
+# handlers coexist here; the dispatcher just awaits each one.
+_DISPATCHER = AsyncWorkDispatcher({"triage": _triage_item, "correlate": _correlate_item},
+                                  node_label="Drain")
 
 
 # ── Assembly + run ───────────────────────────────────────────────────────────────

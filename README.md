@@ -19,8 +19,9 @@ does.
 - **The ledger.** A coverage-gated work queue with exactly-once durability, an audit trail,
   and resume (`muster.Ledger`).
 - **Graph scaffolding.** Base `GraphState` and `GraphDeps`, a crash-safe `atomic_write`, a
-  phase-entry helper, a durable-question channel, and a `WorkDispatcher` that maps work
-  operations to handlers and drains the queue (`muster.graph`).
+  phase-entry helper, a durable-question channel, and a `WorkDispatcher` (plus an
+  `AsyncWorkDispatcher` that drains agentic/async handlers with bounded concurrency) that
+  maps work operations to handlers and drains the queue (`muster.graph`).
 
 ## How you use it
 

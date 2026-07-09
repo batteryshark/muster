@@ -10,6 +10,7 @@ predicate) by composition, so muster never needs to know anything about that dom
 from __future__ import annotations
 
 from muster.graph import (
+    AsyncWorkDispatcher,
     GraphDeps,
     GraphState,
     WorkDispatcher,
@@ -43,6 +44,7 @@ __all__ = [
     "Ledger", "SCHEMA_VERSION", "new_id", "stable_key", "utcnow",
     "Termination", "TERMINAL_STATES", "ACTIONABLE_STATES",
     "CONTINUE", "COMPLETE", "DEADLOCKED", "MAX_ITERATIONS",
-    "GraphState", "GraphDeps", "WorkDispatcher", "atomic_write", "enter", "ask",
+    "GraphState", "GraphDeps", "WorkDispatcher", "AsyncWorkDispatcher",
+    "atomic_write", "enter", "ask",
     "RunPaths", "compute_project_id", "compute_run_id", "new_run_paths", "resolve_run_dir",
 ]

@@ -23,7 +23,9 @@ subclasses ``GraphState`` and ``deps`` subclasses ``GraphDeps``.
 
 from __future__ import annotations
 
+import asyncio
 import os
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -135,3 +137,87 @@ class WorkDispatcher:
         item = dict(item)
         self.dispatch(ctx, item)
         return item
+
+
+AsyncWorkHandler = Callable[[Any, dict], Awaitable[None]]
+
+
+class AsyncWorkDispatcher:
+    """Async sibling of :class:`WorkDispatcher`, for agentic / IO-bound handlers.
+
+    Handlers are coroutines (``async def handle(ctx, item)``), so they can ``await
+    agent.run(...)`` directly on the graph's event loop — the natural way to make a bounded
+    model step a first-class work-queue operation. ``drain`` works the queue with bounded
+    concurrency: several items in flight at once, which is what a batch of model calls wants.
+
+    Concurrency model — deliberately single-threaded asyncio, not OS threads. Leasing is
+    synchronous with no ``await`` inside, so two coroutines never claim the same item; and
+    each ledger write completes before control yields, so muster's one (thread-bound) SQLite
+    connection stays safe with no locks, no pool, no per-thread connections. The only rule
+    for a handler: don't hold a ledger transaction open across an ``await`` — the spine's
+    methods each commit, so using them is always fine. (Parallelizing CPU-bound *sync*
+    handlers across OS threads is a different model — one Ledger per thread plus an
+    atomic-claim lease — that IO-bound agentic work does not need, and this class does not
+    attempt.)"""
+
+    def __init__(self, handlers: dict[str, AsyncWorkHandler] | None = None, *,
+                 node_label: str = "AsyncWorkDispatcher"):
+        self._handlers: dict[str, AsyncWorkHandler] = dict(handlers or {})
+        self._node_label = node_label
+
+    def register(self, operation: str, handler: AsyncWorkHandler) -> "AsyncWorkDispatcher":
+        self._handlers[operation] = handler
+        return self
+
+    async def dispatch(self, ctx, item: dict) -> None:
+        """Route one leased work item to its async handler. Mirrors WorkDispatcher.dispatch:
+        an unknown operation is deferred (never left leased), and a handler that raises fails
+        its item rather than the whole drain."""
+        op = item.get("operation")
+        handler = self._handlers.get(op)
+        try:
+            if handler is not None:
+                await handler(ctx, item)
+            else:
+                ctx.deps.ledger.set_work_status(item["id"], "deferred",
+                    error=f"No queue handler for operation {op!r}.")
+        except Exception as exc:  # a handler bug must not stall the loop
+            ctx.deps.ledger.set_work_status(item["id"], "failed", error=f"{type(exc).__name__}: {exc}")
+            ctx.deps.ledger.event(ctx.state.run_id, self._node_label, "error",
+                                  {"operation": op, "error": repr(exc)})
+
+    async def run_one(self, ctx) -> dict | None:
+        """Lease the next actionable item and dispatch it. Returns the processed item, or
+        None if nothing is actionable right now."""
+        item = ctx.deps.ledger.lease_next_actionable(ctx.state.run_id)
+        if item is None:
+            return None
+        item = dict(item)
+        await self.dispatch(ctx, item)
+        return item
+
+    async def drain(self, ctx, *, concurrency: int = 1, max_items: int | None = None) -> int:
+        """Drain the actionable queue keeping up to ``concurrency`` handlers in flight,
+        leasing a fresh item whenever a slot frees. Because it re-leases as slots free, work
+        unblocked mid-drain is picked up in the same call — a dependency going terminal
+        unblocks its dependents, and a ``needs_evidence`` item bounces back to be retried.
+        Returns the number of items processed; stops when nothing is actionable (or after
+        ``max_items`` leases, a runaway backstop)."""
+        if concurrency < 1:
+            raise ValueError("concurrency must be >= 1")
+        processed = 0
+        in_flight: set[asyncio.Future] = set()
+        while True:
+            while (len(in_flight) < concurrency
+                   and (max_items is None or processed + len(in_flight) < max_items)):
+                item = ctx.deps.ledger.lease_next_actionable(ctx.state.run_id)
+                if item is None:
+                    break  # nothing actionable right now; drain what's in flight, then re-check
+                in_flight.add(asyncio.ensure_future(self.dispatch(ctx, dict(item))))
+            if not in_flight:
+                break
+            done, in_flight = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()  # dispatch swallows handler errors; this surfaces only infra bugs
+                processed += 1
+        return processed
