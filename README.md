@@ -76,6 +76,18 @@ muster = { git = "https://github.com/batteryshark/muster.git" }
 The core depends only on `pydantic-graph`. An optional `model` extra adds `pydantic-ai`
 for applications that build bounded model steps on top.
 
+## Durable Pydantic AI turns
+
+`muster.pydantic_runtime` is available with the `model` extra. It provides lossless
+Pydantic message-history serialization, coalesced thinking/text/tool stream events,
+a dynamic required-tool acquisition policy, and Anthropic-compatible caching settings.
+Applications keep ownership of prompt/message storage and use ordinary Muster work items
+and durable questions for external tool execution and approval.
+
+See [Durable Pydantic AI turns](docs/pydantic-ai-runtime.md), including the verified
+MiniMax-M3 note about forced tool choice, prompted structured output, and explicit
+`cache_control` breakpoints.
+
 ## Requirements
 
 Python 3.11+.

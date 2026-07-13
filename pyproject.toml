@@ -22,10 +22,10 @@ dependencies = [
 
 [project.optional-dependencies]
 # For applications that build bounded, typed model steps on top of muster.
-model = ["pydantic-ai>=0.0.1"]
+model = ["pydantic-ai>=2.6,<3"]
 # Everything the runnable examples/ need (a pydantic-ai agent step). Not shipped in the
 # wheel — examples/ lives at the repo root, outside the packaged src/muster.
-examples = ["pydantic-ai>=0.0.1"]
+examples = ["pydantic-ai>=2.6,<3"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/muster"]
