@@ -91,3 +91,7 @@ MiniMax-M3 note about forced tool choice, prompted structured output, and explic
 ## Requirements
 
 Python 3.11+.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
